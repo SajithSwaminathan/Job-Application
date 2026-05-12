@@ -1,0 +1,54 @@
+# ─── Secrets ────────────────────────────────────────────────
+# .env may contain a real Gmail App Password — never commit it.
+# .env.example IS committed (template only).
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ─── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Qdrant local storage ───────────────────────────────────
+# Docker volume mount — large, machine-specific, regenerable.
+qdrant_storage/
+
+# ─── Generated CV output ────────────────────────────────────
+tailored.pdf
+tailored*.pdf
+*.tailored.pdf
+
+# ─── Editor / OS noise ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── Logs / runtime ─────────────────────────────────────────
+*.log
+.gradio/
