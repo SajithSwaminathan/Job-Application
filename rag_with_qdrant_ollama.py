@@ -295,12 +295,39 @@ def retrieve(query: str, top_k: int = 3) -> list[dict]:
 
 
 def generate_answer(query: str, context_docs: list[dict]) -> str:
-    """Send the query + retrieved context to phi4-mini via Ollama."""
+    """Send the query + retrieved context to phi4-mini via Ollama.
+
+    Grounding contract (see ~/.claude/skills/rag-grounding/SKILL.md):
+    - Prompt forbids out-of-context claims.
+    - Sampling pinned at temperature=0.1 (vs Ollama's ~0.8 default) so the
+      model leans on the context instead of its training prior.
+    - The caller is expected to run `find_unsupported_claims` on the result.
+    """
     context = "\n\n".join(
         f"[{doc['title']}]\n{doc['text']}" for doc in context_docs
     )
     prompt = f"""You are a helpful assistant. Answer the question using ONLY the
 provided context. If the context doesn't contain the answer, say so clearly.
+
+HARD RULES:
+- Do not introduce facts not present in the context above.
+- Do not draw on general world knowledge — even if you happen to know the
+  answer, only use it if it is in the context.
+- If the context is silent on the question, say "The provided context does not
+  contain that information." instead of guessing.
+
+EXAMPLES of forbidden fabrication:
+  ✗ Naming a real-world ISRO chairman (e.g. "K. Sivan", "S. Somanath") when
+    the context attributes leadership of the mission in question to someone else.
+    Use the name in the context, even if it contradicts your training data.
+  ✗ Adding a launch date, cost, or payload count that is not in the context,
+    even if you "know" the real figure.
+  ✗ Mentioning related missions (Chandrayaan-1, Chandrayaan-2) when the context
+    only describes Chandrayaan-3.
+  ✓ Quoting "23 August 2023" as the Chandrayaan-3 landing date because the
+    context states it.
+  ✓ Answering "The provided context does not contain that information." when
+    asked about a mission, person, or figure not covered above.
 
 Context:
 {context}
@@ -316,6 +343,11 @@ Answer:"""
                 "prompt": prompt,
                 "stream": False,
                 "keep_alive": "30m",
+                "options": {
+                    "temperature": 0.1,
+                    "top_p": 0.85,
+                    "repeat_penalty": 1.1,
+                },
             },
             timeout=600,
         )
@@ -327,8 +359,14 @@ Answer:"""
         return f"ERROR: {e}"
 
 
+def _verify_against_context(answer: str, context_docs: list[dict]) -> list[str]:
+    """Run the shared verifier against the joined retrieved context."""
+    joined = "\n\n".join(d.get("text", "") for d in context_docs)
+    return find_unsupported_claims(answer, joined)
+
+
 def rag(query: str, top_k: int = 3) -> None:
-    """Full ISRO RAG pipeline (demo): retrieve → augment → generate."""
+    """Full ISRO RAG pipeline (demo): retrieve → augment → generate → verify."""
     print(f"Question: {query}")
     print("-" * 60)
     docs = retrieve(query, top_k=top_k)
@@ -338,6 +376,13 @@ def rag(query: str, top_k: int = 3) -> None:
     print()
     answer = generate_answer(query, docs)
     print(f"Answer:\n{answer}")
+    warnings = _verify_against_context(answer, docs)
+    if warnings:
+        print("\n⚠️  Verifier flagged these phrases (not in retrieved context):")
+        for w in warnings:
+            print(f"  - {w}")
+    else:
+        print("\n✅ Verifier passed — no out-of-context proper-noun phrases.")
     print("=" * 60 + "\n")
 
 
@@ -953,7 +998,17 @@ def isro_chat_fn(message: str, _history: list) -> str:
     docs = retrieve(message, top_k=3)
     answer = generate_answer(message, docs)
     sources = "\n".join(f"  • {d['title']}  (score: {d['score']:.3f})" for d in docs)
-    return f"{answer}\n\n---\n**Retrieved context:**\n{sources}"
+    warnings = _verify_against_context(answer, docs)
+    if warnings:
+        verifier_md = (
+            "⚠️ **Verifier flagged these phrases (not in retrieved context):**\n"
+            + "\n".join(f"  • `{w}`" for w in warnings)
+        )
+    else:
+        verifier_md = "✅ **Verifier passed** — no out-of-context proper-noun phrases."
+    return (
+        f"{answer}\n\n---\n**Retrieved context:**\n{sources}\n\n{verifier_md}"
+    )
 
 
 def _ui_index_cv(file_obj) -> str:
