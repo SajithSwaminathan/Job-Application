@@ -6,8 +6,7 @@ Two collections:
   - resume_kb           : your indexed CV(s); used for JD-tailored CV generation
 
 Prerequisites:
-  pip install qdrant-client sentence-transformers requests gradio \
-              pypdf reportlab mcp
+  pip install -r requirements.txt
 
   # Qdrant running locally (persistent storage on host):
   docker run -d --name qdrant -p 6333:6333 -p 6334:6334 \
@@ -921,11 +920,16 @@ async def _send_via_mcp(pdf_path: str, jd: str, cv_text: str) -> str:
                     "attachment_path": str(Path(pdf_path).resolve()),
                 },
             )
-            for block in result.content:
-                text = getattr(block, "text", None)
-                if text:
-                    return text
-            return "OK (no text response from MCP tool)"
+            # Collect any text blocks returned by the tool (success or error).
+            text_parts = [
+                t for t in (getattr(b, "text", None) for b in result.content) if t
+            ]
+            payload = "\n".join(text_parts) if text_parts else ""
+            # MCP marks tool-side exceptions with isError=True. Surface them as
+            # real Python exceptions so callers don't have to string-match.
+            if getattr(result, "isError", False):
+                raise RuntimeError(payload or "MCP tool reported an error with no message")
+            return payload or "OK (no text response from MCP tool)"
 
 
 def send_application(pdf_path: str | Path, jd: str, cv_text: str) -> str:

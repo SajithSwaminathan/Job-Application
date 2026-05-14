@@ -43,17 +43,22 @@ def send_application_email(
     body: str,
     attachment_path: str,
 ) -> str:
-    """Send a job-application email with a PDF CV attached via Gmail SMTP."""
+    """Send a job-application email with a PDF CV attached via Gmail SMTP.
+
+    Errors are raised as exceptions so MCP clients see a protocol-level
+    `isError: true` result rather than a success-shaped string starting with
+    "ERROR:" — the prior convention forced callers to string-match.
+    """
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        return (
-            "ERROR: Gmail credentials not configured. "
+        raise RuntimeError(
+            "Gmail credentials not configured. "
             "Create a .env file next to mcp_email_server.py with "
             "GMAIL_USER and GMAIL_APP_PASSWORD (see .env.example)."
         )
 
     attachment = Path(attachment_path)
     if not attachment.is_file():
-        return f"ERROR: attachment not found: {attachment_path}"
+        raise FileNotFoundError(f"attachment not found: {attachment_path}")
 
     msg = EmailMessage()
     msg["From"] = GMAIL_USER
@@ -79,7 +84,7 @@ def send_application_email(
     except smtplib.SMTPAuthenticationError as e:
         is_workspace = not GMAIL_USER.endswith("@gmail.com")
         hints = [
-            f"ERROR: SMTP auth failed for {GMAIL_USER!r}.",
+            f"SMTP auth failed for {GMAIL_USER!r}.",
             f"Gmail raw response: {e}",
             "",
             "Common causes (in order of likelihood):",
@@ -102,9 +107,7 @@ def send_application_email(
             f"GMAIL_APP_PASSWORD set ({len(GMAIL_APP_PASSWORD)} chars after "
             f"stripping spaces; Gmail expects 16)."
         )
-        return "\n".join(hints)
-    except Exception as e:
-        return f"ERROR: failed to send mail: {e}"
+        raise RuntimeError("\n".join(hints)) from e
 
     return f"Sent to {to} with attachment {attachment.name}"
 
