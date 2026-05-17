@@ -13,6 +13,26 @@ Qdrant (Docker), Ollama running `phi4-mini`, Gradio UI, MCP email server.
 Qdrant and Ollama must be up first — see the README for the `docker run …` and
 `ollama run phi4-mini` invocations.
 
+## Module map
+
+The pipeline lives in the `app/` package; `rag_with_qdrant_ollama.py` is a thin
+shim re-exporting public names (CLI/imports unchanged):
+
+- `app/embedding.py` — SentenceTransformer + `VECTOR_SIZE`
+- `app/qdrant_store.py` — Qdrant client, collection names, `ensure_resume_collection`
+- `app/ollama_client.py` — `generate()` (pinned grounded sampling), `warm_up()`
+- `app/isro_demo.py` — ISRO demo: `DOCUMENTS`, `rag()`, `_demo_isro()` (NOT in the graph)
+- `app/cv/` — `extract` (PDF/regex), `store` (index/retrieve/fetch_full),
+  `verifier`, `prompts`, `render`, `email_client` (MCP transport)
+- `app/graph/` — LangGraph: `state` (TypedDict), `nodes`, `build`
+  (`run_cv_pipeline` is the legacy `build_application` replacement)
+- `app/ui/gradio_app.py`, `app/cli.py` — presentation/entry
+
+The CV flow is now a `StateGraph` with one verifier-driven retry edge:
+`retrieve_top → fetch_full → generate_cv → verify_cv ⇄ (one stricter retry) →
+assemble → render → (send if flagged)`. Warnings are still surfaced after the
+retry, never silently stripped.
+
 ## Active skills
 
 Both apply when editing this project:

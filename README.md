@@ -70,18 +70,23 @@ Two Qdrant collections, never mixed:
 | `isro_knowledge_base` | Demo corpus on the Indian space programme | Hard-coded `DOCUMENTS` list |
 | `resume_kb` | Chunked resume(s) for CV tailoring | `index_cv(pdf_path)` |
 
-The CV pipeline is a deterministic five-step flow (no agent loop):
+The CV pipeline is a LangGraph `StateGraph` with one verifier-driven retry edge:
 
 ```
-retrieve → generate → verify → render → email
+retrieve_top → fetch_full → generate_cv → verify_cv
+verify_cv ─(warnings & retry≤1)→ generate_cv   (one stricter retry)
+          └(else)──────────────→ assemble → render → (send if flagged)
 ```
 
-Key functions to read first:
+The implementation lives in the `app/` package; `rag_with_qdrant_ollama.py` is
+a thin shim re-exporting the public names (CLI/imports unchanged). Files to
+read first:
 
-- [`build_application`](rag_with_qdrant_ollama.py#L925) — the end-to-end orchestration
-- [`fetch_full_cv`](rag_with_qdrant_ollama.py#L520) — pulls **every** chunk of the chosen resume so the LLM sees the whole document, not just top-k semantic hits
-- [`generate_tailored_cv`](rag_with_qdrant_ollama.py#L702) + [`CV_TEMPLATE_INSTRUCTIONS`](rag_with_qdrant_ollama.py#L633) — strict-grounding prompt with concrete negative examples
-- [`find_unsupported_claims`](rag_with_qdrant_ollama.py#L572) — heuristic verifier that flags proper-noun phrases not present in the source CV
+- [`run_cv_pipeline` / `build_cv_graph`](app/graph/build.py) — the graph wiring + façade (replaces the old `build_application`)
+- [`app/graph/nodes.py`](app/graph/nodes.py) — one function per pipeline step
+- [`fetch_full_cv`](app/cv/store.py) — pulls **every** chunk of the chosen resume so the LLM sees the whole document, not just top-k semantic hits
+- [`generate_tailored_cv` + `CV_TEMPLATE_INSTRUCTIONS`](app/cv/prompts.py) — strict-grounding prompt with concrete negative examples (`STRICT_RETRY_INSTRUCTIONS` is the retry-pass overlay)
+- [`find_unsupported_claims`](app/cv/verifier.py) — heuristic verifier that flags proper-noun phrases not present in the source CV
 
 The email sender is a **separate MCP server** ([`mcp_email_server.py`](mcp_email_server.py)). The main script spawns it over stdio and calls `send_application_email` through the MCP client SDK. Because it's a real MCP server, it can also be registered with Claude Code (see `.claude/settings.json`) and called directly by the assistant — not only by the Python pipeline.
 
@@ -111,14 +116,15 @@ The canonical statement of this standard lives in [`~/.claude/skills/rag-groundi
 
 | Symptom | Likely cause |
 |---|---|
-| `Cannot reach Qdrant at http://localhost:6333` | Qdrant container not running. See the error block at [`rag_with_qdrant_ollama.py:222`](rag_with_qdrant_ollama.py#L222) for the exact `docker run` command. |
+| `Cannot reach Qdrant at http://localhost:6333` | Qdrant container not running. See the error block in [`app/qdrant_store.py`](app/qdrant_store.py) for the exact `docker run` command. |
 | `ERROR: Cannot connect to Ollama` | Ollama not started. Run `ollama serve` (or `ollama run phi4-mini`) and retry. |
 | `SMTPAuthenticationError` / app-password rejected | Most likely a typo, or 2-Step Verification not enabled. Workspace admins sometimes disable App Passwords org-wide — see the diagnostic hints at [`mcp_email_server.py:79`](mcp_email_server.py#L79). |
 | `resume_kb is empty` when generating a CV | Index a resume first via `--index-cv /path/to/resume.pdf` or the Gradio upload box. |
 
 ## Files
 
-- `rag_with_qdrant_ollama.py` — main pipeline + Gradio UI + CLI
+- `rag_with_qdrant_ollama.py` — thin shim (re-exports `app/`); preserves the CLI
+- `app/` — pipeline package (embedding, qdrant_store, ollama_client, isro_demo, cv/, graph/, ui/, cli)
 - `mcp_email_server.py` — MCP server exposing `send_application_email`
 - `.env.example` — Gmail credential template (copy to `.env`)
 - `requirements.txt` — Python dependencies (loose minimums)
